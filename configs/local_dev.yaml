@@ -1,0 +1,63 @@
+# Local-dev training config -- for a laptop with 6-8 GB VRAM.
+#
+# NOTE: This config is for the FUTURE case where we add a local training
+# path (e.g., using `trl.GRPOTrainer`). Today, training stays on the
+# server (configs/skeleton.yaml, configs/r0_grpo.yaml). This file is a
+# placeholder with the right shape so Member 3 can wire it up later.
+#
+# Reality check for a 6GB RTX 4050:
+#   - Qwen3-0.6B fp16 inference:         ~1.2GB — fine
+#   - Qwen3-0.6B fp16 LoRA training:     ~3-4GB with batch=1, grad_accum=8
+#   - Qwen3-0.6B fp16 LoRA + vLLM:       won't fit alongside rollouts
+#
+# For local work prefer `scripts/local_sanity.py` (inference only, no
+# training). Full training runs happen on the server.
+
+_meta:
+  reward: r0
+  optimizer: grpo
+  model: qwen3-0.6b
+  seed: 0
+  device: auto               # auto|cpu|cuda — resolved via src/common/device.py
+
+trainer:
+  project_name: rl-rag-local
+  experiment_name: r0_grpo_local_dev
+  n_gpus_per_node: 1
+  nnodes: 1
+  total_training_steps: 20   # smoke-test number; crank up on server
+  save_freq: 20
+  logger: [console]
+
+data:
+  train_files: data/raw/hotpot_tiny.jsonl   # tiny for local; swap to dense_train.jsonl on server
+  val_files:   data/raw/hotpot_tiny.jsonl
+  prompt_key: prompt
+  max_prompt_length: 1024    # halved vs server
+  max_response_length: 256   # halved vs server
+  train_batch_size: 1        # one at a time
+  grad_accumulation_steps: 8 # effective batch 8
+
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen3-0.6B
+    enable_lora: true
+    lora_rank: 8             # halved vs server (saves VRAM)
+    lora_alpha: 16
+    gradient_checkpointing: true
+  rollout:
+    backend: hf              # DO NOT use vllm locally (won't fit)
+    n: 4                     # smaller G group than server (saves time)
+    temperature: 0.9
+  actor:
+    optim:
+      lr: 1.0e-5
+    ppo_mini_batch_size: 1
+
+algorithm:
+  name: grpo
+  kl_coef: 0.001
+  advantage_normalization: true
+
+reward_fn:
+  path: src.rewards.r0_grace:r0_grace

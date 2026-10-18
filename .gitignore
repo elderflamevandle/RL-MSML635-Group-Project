@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Project
+results/
+data/cache/
+data/raw/
+*.ckpt
+*.pt
+*.safetensors
+wandb/
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / tooling
+.claude/
+.idea/
+.vscode/

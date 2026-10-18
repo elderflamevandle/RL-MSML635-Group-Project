@@ -1,0 +1,33 @@
+[project]
+name = "rl-rag"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=2.20",
+    "transformers>=4.44",
+    "sentence-transformers>=3.0",
+    "rank-bm25>=0.2.2",
+    "rouge-score>=0.1.2",
+    "bert-score>=0.3.13",
+    "torch>=2.3",
+    "numpy",
+    "pydantic>=2",
+    "pyyaml",
+    "requests",
+    "tenacity",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov", "ruff", "mypy"]
+train = ["vllm", "accelerate", "peft", "wandb"]  # heavy; install on server only
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

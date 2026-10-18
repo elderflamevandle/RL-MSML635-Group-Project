@@ -1,0 +1,50 @@
+# Full-size R0 + GRPO config on HotpotQA. Server-only.
+# Field names come from the GRACE paper's reference verl config and will
+# almost certainly need iteration against the actual verl version installed
+# on the GPU box. Week 2 Task 2.3 Step 8 handles that.
+_meta:
+  reward: r0
+  optimizer: grpo
+  model: qwen3-0.6b
+  seed: 0
+
+trainer:
+  project_name: rl-rag
+  experiment_name: r0_grpo_qwen3-0.6b
+  n_gpus_per_node: 1
+  nnodes: 1
+  total_training_steps: 400   # tune after first run
+  save_freq: 100
+  logger: [console]           # swap to [console, wandb] after W&B setup
+
+data:
+  train_files: data/cache/dense_train.jsonl
+  val_files:   data/cache/dense_val.jsonl
+  prompt_key: prompt
+  max_prompt_length: 2048
+  max_response_length: 512
+  train_batch_size: 32
+
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen3-0.6B
+    enable_lora: true
+    lora_rank: 16
+    lora_alpha: 32
+  rollout:
+    name: vllm
+    gpu_memory_utilization: 0.6
+    n: 8                      # G rollouts for GRPO group
+    temperature: 0.9
+  actor:
+    optim:
+      lr: 1.0e-5
+    ppo_mini_batch_size: 16
+
+algorithm:
+  name: grpo
+  kl_coef: 0.001
+  advantage_normalization: true
+
+reward_fn:
+  path: src.rewards.r0_grace:r0_grace
