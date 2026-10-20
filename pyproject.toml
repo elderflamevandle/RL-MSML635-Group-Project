@@ -3,11 +3,12 @@ name = "rl-rag"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "datasets>=2.20",
-    # transformers 5.x calls torch.accelerator which requires torch >= 2.6.
-    # Keep below 5 while we're on torch 2.5.x (laptop CUDA 12.1 wheel).
+    # HF stack upper bounds locked together: HF 1.0 / datasets 5.x / sentence-transformers 5+ /
+    # transformers 5.x all require torch>=2.6 (torch.accelerator API). We're on torch 2.5.x
+    # (CUDA 12.1 wheel), so pin to the last pre-rebrand majors that work with huggingface-hub 0.x.
+    "datasets>=2.20,<5",
     "transformers>=4.44,<5",
-    "sentence-transformers>=3.0",
+    "sentence-transformers>=3.0,<5",
     "rank-bm25>=0.2.2",
     "rouge-score>=0.1.2",
     "bert-score>=0.3.13",

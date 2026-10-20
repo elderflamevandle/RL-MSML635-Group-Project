@@ -24,16 +24,33 @@ class BM25Retriever:
         return [self.corpus[i] for i in idx]
 
 class DenseRetriever:
-    def __init__(self, corpus: list[str], model_name: str = "Qwen/Qwen3-Embedding-0.6B"):
+    def __init__(
+        self,
+        corpus: list[str],
+        model_name: str = "Qwen/Qwen3-Embedding-0.6B",
+        device: str | None = None,
+        batch_size: int = 32,
+    ):
         from sentence_transformers import SentenceTransformer
         self.corpus = corpus
-        self._model = SentenceTransformer(model_name)
+        self._model = SentenceTransformer(model_name, device=device)
+        self._batch_size = batch_size
         self._embs = self._model.encode(
-            corpus, convert_to_numpy=True, normalize_embeddings=True
+            corpus,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            batch_size=batch_size,
+            show_progress_bar=False,
         )
 
     def retrieve(self, query: str, k: int) -> list[str]:
-        q_emb = self._model.encode([query], convert_to_numpy=True, normalize_embeddings=True)[0]
+        q_emb = self._model.encode(
+            [query],
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            batch_size=self._batch_size,
+            show_progress_bar=False,
+        )[0]
         sims = self._embs @ q_emb
         sims = np.nan_to_num(sims, nan=-np.inf)
         idx = np.argsort(-sims, kind="stable")[:k]
