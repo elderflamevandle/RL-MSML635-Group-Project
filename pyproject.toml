@@ -4,7 +4,9 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "datasets>=2.20",
-    "transformers>=4.44",
+    # transformers 5.x calls torch.accelerator which requires torch >= 2.6.
+    # Keep below 5 while we're on torch 2.5.x (laptop CUDA 12.1 wheel).
+    "transformers>=4.44,<5",
     "sentence-transformers>=3.0",
     "rank-bm25>=0.2.2",
     "rouge-score>=0.1.2",
