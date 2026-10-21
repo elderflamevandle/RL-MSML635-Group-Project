@@ -1,0 +1,48 @@
+# R1 (cost-sensitive) + GRPO on HotpotQA. Server-only.
+# Delta from r0_grpo.yaml: reward_fn.path points at r1_cost_sensitive.
+_meta:
+  reward: r1
+  optimizer: grpo
+  model: qwen3-0.6b
+  seed: 0
+
+trainer:
+  project_name: rl-rag
+  experiment_name: r1_grpo_qwen3-0.6b
+  n_gpus_per_node: 1
+  nnodes: 1
+  total_training_steps: 400
+  save_freq: 100
+  logger: [console]
+
+data:
+  train_files: data/cache/dense_train.jsonl
+  val_files:   data/cache/dense_val.jsonl
+  prompt_key: prompt
+  max_prompt_length: 2048
+  max_response_length: 512
+  train_batch_size: 32
+
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen3-0.6B
+    enable_lora: true
+    lora_rank: 16
+    lora_alpha: 32
+  rollout:
+    name: vllm
+    gpu_memory_utilization: 0.6
+    n: 8
+    temperature: 0.9
+  actor:
+    optim:
+      lr: 1.0e-5
+    ppo_mini_batch_size: 16
+
+algorithm:
+  name: grpo
+  kl_coef: 0.001
+  advantage_normalization: true
+
+reward_fn:
+  path: src.rewards.r1_cost_sensitive:r1_cost_sensitive

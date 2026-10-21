@@ -1,0 +1,29 @@
+# Experimental grid for Week-4 "must" + Week-5 "should" runs on HotpotQA.
+# Consumed by scripts/run_grid.sh.
+#
+# Priorities match the plan:
+#   must   — launched Week 4; the comparison table in the final report requires these
+#   should — launched Week 5 after the "must" results are in; completes RQ1 × RQ2
+#   stretch — Qwen3-1.7B hero run on winning (reward, optimizer); QASPER cross-domain
+#
+# Order matters: run_grid.sh launches sequentially so an early-stage schema failure
+# halts before burning compute on later configs.
+runs:
+  - config: configs/r0_grpo.yaml
+    priority: must
+    note: GRACE baseline reproduction; Week-2 Gate must land here first
+  - config: configs/r0_dapo.yaml
+    priority: must
+    note: RQ2 half with the baseline reward
+  - config: configs/r1_grpo.yaml
+    priority: must
+    note: Cost-sensitive reward with hallucination penalty
+  - config: configs/r2_grpo.yaml
+    priority: must
+    note: Hard-gated multiplicative reward (RQ1 extreme test)
+  - config: configs/r1_dapo.yaml
+    priority: should
+    note: Completes R1 × optimizer sweep
+  - config: configs/r2_dapo.yaml
+    priority: should
+    note: Completes RQ1 × RQ2 full matrix

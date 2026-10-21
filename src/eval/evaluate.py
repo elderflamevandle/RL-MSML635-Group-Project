@@ -126,7 +126,34 @@ def generate(
     )
 
 
-def _score(samples: list[Sample], responses: list[str]) -> tuple[list[dict], dict]:
+def _bertscore_f1(preds: list[str], refs: list[str]) -> list[float]:
+    """Compute BERTScore F1 per (pred, ref). Lazy-imports bert_score so the
+    module stays import-safe on machines without it installed."""
+    from bert_score import score as bs_score  # type: ignore
+    _, _, f1 = bs_score(preds, refs, lang="en", rescale_with_baseline=False, verbose=False)
+    return [float(x) for x in f1.tolist()]
+
+
+def _judge_scores(
+    questions: list[str],
+    preds: list[str],
+    refs: list[str],
+    cache_dir: Path | None,
+) -> list[float]:
+    """Call GroqJudge on each (question, pred, ref). Reads GROQ_API_KEY from env."""
+    from src.eval.judge import GroqJudge
+    judge = GroqJudge(cache_dir=cache_dir)
+    return [judge.score(q, p, r) for q, p, r in zip(questions, preds, refs)]
+
+
+def _score(
+    samples: list[Sample],
+    responses: list[str],
+    *,
+    with_bertscore: bool = False,
+    with_judge: bool = False,
+    judge_cache_dir: Path | None = None,
+) -> tuple[list[dict], dict]:
     rows: list[dict] = []
     for s, resp in zip(samples, responses):
         parsed = parse_response(resp)
@@ -141,12 +168,34 @@ def _score(samples: list[Sample], responses: list[str]) -> tuple[list[dict], dic
             "em": em,
         })
 
+    if with_bertscore or with_judge:
+        ans_indices = [i for i, r in enumerate(rows) if r["is_answerable"]]
+        if ans_indices:
+            preds = [rows[i]["answer"] for i in ans_indices]
+            refs = [samples[i].gold_answer for i in ans_indices]
+            questions = [samples[i].question for i in ans_indices]
+            if with_bertscore:
+                f1s = _bertscore_f1(preds, refs)
+                for i, f1 in zip(ans_indices, f1s):
+                    rows[i]["bertscore_f1"] = f1
+            if with_judge:
+                judge_vals = _judge_scores(questions, preds, refs, judge_cache_dir)
+                for i, j in zip(ans_indices, judge_vals):
+                    rows[i]["judge_score"] = j
+        # Unanswerable rows get None for both — don't fabricate a score.
+        for r in rows:
+            if not r["is_answerable"]:
+                if with_bertscore:
+                    r["bertscore_f1"] = None
+                if with_judge:
+                    r["judge_score"] = None
+
     ans_rows = [r for r in rows if r["is_answerable"]]
     em_ans = mean(r["em"] for r in ans_rows) if ans_rows else 0.0
     abst = abstention_accuracy([(r["path"], r["is_answerable"]) for r in rows])
     bal = balanced_accuracy(em_ans, abst)
     n = len(rows)
-    metrics = {
+    metrics: dict = {
         "n": n,
         "n_answerable": len(ans_rows),
         "em_answerable": em_ans,
@@ -158,6 +207,12 @@ def _score(samples: list[Sample], responses: list[str]) -> tuple[list[dict], dic
             "invalid":  sum(1 for r in rows if r["path"] == "invalid") / n if n else 0.0,
         },
     }
+    if with_bertscore and ans_rows:
+        vals = [r["bertscore_f1"] for r in ans_rows if r.get("bertscore_f1") is not None]
+        metrics["bertscore_f1_answerable"] = mean(vals) if vals else 0.0
+    if with_judge and ans_rows:
+        vals = [r["judge_score"] for r in ans_rows if r.get("judge_score") is not None]
+        metrics["judge_score_answerable"] = mean(vals) if vals else 0.0
     return rows, metrics
 
 
@@ -171,6 +226,9 @@ def evaluate(
     max_samples: int | None = None,
     max_new_tokens: int = 512,
     batch_size: int = 1,
+    with_bertscore: bool = False,
+    with_judge: bool = False,
+    judge_cache_dir: Path | None = None,
 ) -> dict:
     samples = _load_split(split_file, limit=max_samples)
     prompts = [build_prompt(s.question, s.retrieved_passages) for s in samples]
@@ -179,7 +237,12 @@ def evaluate(
         backend=backend, device=device,
         max_new_tokens=max_new_tokens, batch_size=batch_size,
     )
-    rows, metrics = _score(samples, responses)
+    rows, metrics = _score(
+        samples, responses,
+        with_bertscore=with_bertscore,
+        with_judge=with_judge,
+        judge_cache_dir=judge_cache_dir,
+    )
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
@@ -204,6 +267,13 @@ def _cli() -> None:
                     help="Cap for quick sanity runs.")
     ap.add_argument("--max-new-tokens", type=int, default=512)
     ap.add_argument("--batch-size", type=int, default=1)
+    ap.add_argument("--bertscore", action="store_true",
+                    help="Compute BERTScore F1 on answerable predictions.")
+    ap.add_argument("--judge", action="store_true",
+                    help="Call the Groq LLM-as-Judge on answerable predictions. "
+                         "Requires GROQ_API_KEY in the environment.")
+    ap.add_argument("--judge-cache-dir", type=Path, default=Path("data/cache/judge"),
+                    help="On-disk cache dir for the LLM-as-Judge responses.")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -216,6 +286,9 @@ def _cli() -> None:
         max_samples=args.max_samples,
         max_new_tokens=args.max_new_tokens,
         batch_size=args.batch_size,
+        with_bertscore=args.bertscore,
+        with_judge=args.judge,
+        judge_cache_dir=args.judge_cache_dir if args.judge else None,
     )
     print(json.dumps(m, indent=2))
 
