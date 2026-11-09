@@ -5,6 +5,12 @@
 #   - gpu_memory_utilization 0.5 (vLLM shares VRAM with trainer activations)
 #   - n = 2 rollouts (fits group-advantage math; cheap smoke test)
 #   - max_prompt_length / max_response_length trimmed for KV-cache headroom
+# Extends verl's base PPO/GRPO config. launch_run.sh adds verl's config dir
+# to Hydra's search path via --config-dir so `ppo_trainer` resolves.
+defaults:
+  - ppo_trainer
+  - _self_
+
 _meta:
   reward: r0
   optimizer: grpo

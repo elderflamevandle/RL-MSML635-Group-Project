@@ -4,33 +4,47 @@
 set -euo pipefail
 CFG=${1:?"usage: launch_run.sh <config.yaml>"}
 
-# Expect the user to have activated their training venv first.
-# source ~/rl-rag-venv/bin/activate  # team member runs this
-
 cd "$(dirname "$0")/.."
 
+# Our YAMLs carry a custom `_meta` block (reward/optimizer/model/seed) that
+# verl's struct-mode Hydra schema does NOT allow. Extract it here for the
+# run_id, then write a stripped copy for verl to consume.
 RUN_ID=$(python -c "
 import yaml
 from src.training.run_naming import make_run_id
 c = yaml.safe_load(open('${CFG}'))
-print(make_run_id(c['_meta']['reward'], c['_meta']['optimizer'], c['_meta']['model'], c['_meta'].get('seed', 0)))
+m = c['_meta']
+print(make_run_id(m['reward'], m['optimizer'], m['model'], m.get('seed', 0)))
 ")
 OUT="results/${RUN_ID}"
 mkdir -p "${OUT}"
 cp "${CFG}" "${OUT}/config.yaml"
 
+python - <<PY
+import yaml
+c = yaml.safe_load(open("${CFG}"))
+c.pop("_meta", None)
+open("${OUT}/config_verl.yaml", "w").write(yaml.safe_dump(c, sort_keys=False))
+PY
+
 echo "RUN_ID=${RUN_ID}"
 echo "OUT=${OUT}"
 
-# verl >= GRACE-pin uses Hydra for config. Hydra wants --config-path +
-# --config-name separately, not a single --config. Use ++key=value for
-# overrides so adds are tolerated even when the key isn't in the YAML.
-CFG_ABS=$(realpath "${CFG}")
-CFG_DIR=$(dirname "${CFG_ABS}")
-CFG_NAME=$(basename "${CFG_ABS}" .yaml)
+# verl uses Hydra. Our config extends verl's ppo_trainer base via `defaults:`.
+# --config-dir adds verl's config dir to Hydra's search path so `ppo_trainer`
+# resolves. --config-path points at where our stripped YAML lives.
+OUT_ABS=$(realpath "${OUT}")
+VERL_CFG_DIR="${VERL_CFG_DIR:-/tmp/verl_src/verl/trainer/config}"
+
+if [ ! -d "${VERL_CFG_DIR}" ]; then
+    echo "ERROR: verl config dir not found at ${VERL_CFG_DIR}" >&2
+    echo "Reinstall verl via scripts/setup_colab.sh or export VERL_CFG_DIR=..." >&2
+    exit 2
+fi
 
 python -m verl.trainer.main_ppo \
-  --config-path "${CFG_DIR}" \
-  --config-name "${CFG_NAME}" \
+  --config-path "${OUT_ABS}" \
+  --config-name "config_verl" \
+  --config-dir "${VERL_CFG_DIR}" \
   ++trainer.default_local_dir="${OUT}" \
   2>&1 | tee "${OUT}/train.log"

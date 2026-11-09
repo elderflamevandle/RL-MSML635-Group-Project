@@ -10,6 +10,12 @@
 #     the last checkpoint left off.
 #   - data points at BM25 cache (already committed in data/cache/); switch
 #     to dense_train/dense_val after scripts/build_retrieval.py has run.
+# Extends verl's base PPO/GRPO config via Hydra composition.
+# launch_run.sh adds verl's config dir to Hydra's search path.
+defaults:
+  - ppo_trainer
+  - _self_
+
 _meta:
   reward: r0
   optimizer: grpo
