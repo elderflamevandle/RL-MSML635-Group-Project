@@ -50,9 +50,18 @@ pip install -q "vllm==0.6.6" || {
   pip install -q vllm
 }
 
-echo "[5/6] verl @ GRACE-pinned commit"
+echo "[5/6] verl @ GRACE-pinned commit (editable clone — wheel builds drop subpackages like experimental/dataset)"
 VERL_COMMIT="${VERL_COMMIT:-4aa02fe1663d8048b9c204345b2abe5197870df3}"
-pip install -q "git+https://github.com/volcengine/verl.git@${VERL_COMMIT}"
+VERL_DIR="${VERL_DIR:-/tmp/verl_src}"
+pip uninstall -y verl >/dev/null 2>&1 || true
+if [ -d "$VERL_DIR/.git" ]; then
+    git -C "$VERL_DIR" fetch --quiet origin
+else
+    rm -rf "$VERL_DIR"
+    git clone --quiet https://github.com/volcengine/verl.git "$VERL_DIR"
+fi
+git -C "$VERL_DIR" checkout --quiet "$VERL_COMMIT"
+pip install -q -e "$VERL_DIR"
 
 echo "[6/6] verify"
 python - <<'PY'
