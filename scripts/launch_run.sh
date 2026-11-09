@@ -22,6 +22,15 @@ cp "${CFG}" "${OUT}/config.yaml"
 echo "RUN_ID=${RUN_ID}"
 echo "OUT=${OUT}"
 
-python -m verl.trainer.main_ppo --config "${CFG}" \
-  trainer.default_local_dir="${OUT}" \
+# verl >= GRACE-pin uses Hydra for config. Hydra wants --config-path +
+# --config-name separately, not a single --config. Use ++key=value for
+# overrides so adds are tolerated even when the key isn't in the YAML.
+CFG_ABS=$(realpath "${CFG}")
+CFG_DIR=$(dirname "${CFG_ABS}")
+CFG_NAME=$(basename "${CFG_ABS}" .yaml)
+
+python -m verl.trainer.main_ppo \
+  --config-path "${CFG_DIR}" \
+  --config-name "${CFG_NAME}" \
+  ++trainer.default_local_dir="${OUT}" \
   2>&1 | tee "${OUT}/train.log"
