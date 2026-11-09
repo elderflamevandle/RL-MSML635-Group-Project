@@ -27,10 +27,12 @@ trainer:
   experiment_name: r0_grpo_qwen3-0.6b_t4
   n_gpus_per_node: 1
   nnodes: 1
+  total_epochs: 1
   total_training_steps: 200
   save_freq: 25
   resume_mode: auto
   logger: [console]
+  val_before_train: false
 
 data:
   train_files: data/cache/bm25_train.jsonl
@@ -52,6 +54,7 @@ actor_rollout_ref:
     n: 4
     temperature: 0.9
     dtype: float16
+    tensor_model_parallel_size: 1
   actor:
     optim:
       lr: 1.0e-5
