@@ -1,0 +1,57 @@
+# T4-tuned walking skeleton. 1-step GRPO run to smoke-test the full stack
+# on a Colab T4 (16 GB, sm_75, single GPU, no bfloat16, no wandb key).
+#
+# Overrides vs. verl's ppo_trainer base (merged defaults are logged at launch):
+#   - rollout.tensor_model_parallel_size: 1 (base default 2; we have 1 GPU)
+#   - rollout.dtype: float16 (base default bfloat16; T4 sm_75 has no bf16)
+#   - trainer.logger: [console] (base default [console, wandb]; no W&B key)
+#   - trainer.total_epochs: 1 (base default 30)
+#   - data.train_files + val_files: bm25_val.jsonl (raw hotpot_tiny.jsonl
+#     lacks the `prompt` column verl's dataloader expects)
+defaults:
+  - ppo_trainer
+  - _self_
+
+_meta:
+  reward: r0
+  optimizer: grpo
+  model: qwen3-0.6b
+  seed: 0
+
+trainer:
+  project_name: rl-rag-skeleton
+  experiment_name: skeleton_t4
+  n_gpus_per_node: 1
+  nnodes: 1
+  total_epochs: 1
+  total_training_steps: 1
+  save_freq: 1
+  logger: [console]
+  val_before_train: false
+
+data:
+  train_files: data/cache/bm25_val.jsonl
+  val_files: data/cache/bm25_val.jsonl
+  prompt_key: prompt
+  max_prompt_length: 1536
+  max_response_length: 384
+  train_batch_size: 2
+
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen3-0.6B
+    enable_lora: true
+    lora_rank: 16
+  rollout:
+    name: vllm
+    gpu_memory_utilization: 0.5
+    n: 2
+    tensor_model_parallel_size: 1
+    dtype: float16
+
+algorithm:
+  name: grpo
+  kl_coef: 0.001
+
+reward_fn:
+  path: src.rewards.r0_grace:r0_grace
