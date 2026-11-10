@@ -18,8 +18,10 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq python3.12 python3.12-dev python3.12-venv
 
 echo "[2/5] minimal HF stack in Jupyter's Python 3.13 (for data + baseline eval)"
+# transformers>=4.51 is required for Qwen3ForCausalLM; older pins silently
+# install a version that doesn't know the Qwen3 architecture.
 pip install -q "numpy<2" \
-    "datasets>=2.20,<5" "transformers>=4.44,<5" \
+    "datasets>=2.20,<5" "transformers>=4.51,<5" \
     "rank-bm25>=0.2.2" "rouge-score>=0.1.2" "bert-score>=0.3.13" \
     "huggingface-hub<1.0" "pydantic>=2" "pyyaml" "requests" "tenacity"
 
@@ -31,7 +33,7 @@ echo "[4/5] torch cu121 + HF + vllm 0.6.6 into venv312"
 $PIP install -q --index-url https://download.pytorch.org/whl/cu121 \
     "torch==2.5.1" "torchvision==0.20.1" "torchaudio==2.5.1"
 $PIP install -q \
-    "numpy<2" "datasets>=2.20,<5" "transformers>=4.44,<5" \
+    "numpy<2" "datasets>=2.20,<5" "transformers>=4.51,<5" \
     "sentence-transformers>=3.0,<5" "huggingface-hub<1.0" \
     "rank-bm25>=0.2.2" "rouge-score>=0.1.2" "bert-score>=0.3.13" \
     "pydantic>=2" "pyyaml" "requests" "tenacity" \
