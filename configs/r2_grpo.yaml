@@ -1,4 +1,12 @@
-# R2 (hard-gated multiplicative) + GRPO on HotpotQA. Server-only.
+# Full-size R2 + GRPO on HotpotQA (dense retrieval). Server-only --
+# needs scripts/build_retrieval.py (no --no-dense) then scripts/build_verl_data.py
+# to produce dense_{train,val}.parquet before this will load.
+# Schema verified against verl @ 4aa02fe; see configs/skeleton_t4.yaml for the
+# list of renames from the first (unverified) draft of this file.
+defaults:
+  - ppo_trainer
+  - _self_
+
 _meta:
   reward: r2
   optimizer: grpo
@@ -10,38 +18,51 @@ trainer:
   experiment_name: r2_grpo_qwen3-0.6b
   n_gpus_per_node: 1
   nnodes: 1
+  total_epochs: 3
   total_training_steps: 400
   save_freq: 100
+  test_freq: -1
+  resume_mode: auto
   logger: [console]
+  val_before_train: false
 
 data:
-  train_files: data/cache/dense_train.jsonl
-  val_files:   data/cache/dense_val.jsonl
+  train_files: data/cache/dense_train.parquet
+  val_files:   data/cache/dense_val.parquet
   prompt_key: prompt
   max_prompt_length: 2048
   max_response_length: 512
   train_batch_size: 32
+  filter_overlong_prompts: true
+  truncation: left
+  dataloader_num_workers: 4
 
 actor_rollout_ref:
   model:
     path: Qwen/Qwen3-0.6B
-    enable_lora: true
     lora_rank: 16
     lora_alpha: 32
-  rollout:
-    name: vllm
-    gpu_memory_utilization: 0.6
-    n: 8
-    temperature: 0.9
+    custom_chat_template: "{{ messages[0]['content'] }}"
   actor:
+    ppo_mini_batch_size: 16
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
     optim:
       lr: 1.0e-5
-    ppo_mini_batch_size: 16
+  rollout:
+    name: vllm
+    mode: sync
+    n: 8
+    temperature: 0.9
+    gpu_memory_utilization: 0.6
+    tensor_model_parallel_size: 1
 
 algorithm:
-  name: grpo
-  kl_coef: 0.001
-  advantage_normalization: true
+  adv_estimator: grpo
+  norm_adv_by_std_in_grpo: true
+  use_kl_in_reward: false
 
-reward_fn:
-  path: src.rewards.r2_hard_gated:r2_hard_gated
+custom_reward_function:
+  path: src/rewards/verl_adapter.py
+  name: r2_score
