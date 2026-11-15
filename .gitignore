@@ -26,3 +26,6 @@ Thumbs.db
 .claude/
 .idea/
 .vscode/
+
+# verl checkout -- cloned fresh by scripts/setup_uv.sh, not tracked
+.vendor/

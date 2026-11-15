@@ -13,8 +13,10 @@ test can patch the LocalRunner internals without pulling in torch at all.
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from src.common.device import resolve_device
@@ -68,12 +70,22 @@ class LocalRunner:
             self.model_path, self.device, dtype,
         )
 
+        # A LoRA checkpoint dir (PEFT adapter) may not ship a tokenizer --
+        # verl's `actor/lora_adapter` doesn't. Fall back to the base model's.
+        tok_path = self.model_path
+        adapter_cfg = Path(self.model_path) / "adapter_config.json"
+        if adapter_cfg.exists() and not (Path(self.model_path) / "tokenizer_config.json").exists():
+            tok_path = json.loads(adapter_cfg.read_text())["base_model_name_or_path"]
+
         self._tokenizer = AutoTokenizer.from_pretrained(
-            self.model_path, trust_remote_code=self._trust_remote_code
+            tok_path, trust_remote_code=self._trust_remote_code
         )
         if self._tokenizer.pad_token_id is None:
             # Qwen tokenizers typically have eos but no pad; reuse eos.
             self._tokenizer.pad_token = self._tokenizer.eos_token
+        # Decoder-only models must be LEFT-padded for batched generation,
+        # otherwise every short prompt in a batch continues from pad tokens.
+        self._tokenizer.padding_side = "left"
 
         self._model = AutoModelForCausalLM.from_pretrained(
             self.model_path,

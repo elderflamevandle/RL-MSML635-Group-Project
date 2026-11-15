@@ -26,13 +26,14 @@ _meta:
 trainer:
   project_name: rl-rag
 data:
-  train_files: /nonexistent/train.jsonl  # OK: just surfaces a note
-  val_files: /nonexistent/val.jsonl
+  train_files: /nonexistent/train.parquet  # OK: just surfaces a note
+  val_files: /nonexistent/val.parquet
   prompt_key: prompt
 algorithm:
-  name: grpo
-reward_fn:
-  path: src.rewards.r0_grace:r0_grace
+  adv_estimator: grpo
+custom_reward_function:
+  path: src/rewards/r0_grace.py
+  name: r0_grace
 """
 
 
@@ -55,33 +56,33 @@ def test_missing_meta_section_is_caught(tmp_path: Path):
 def test_bad_reward_fn_import_is_caught(tmp_path: Path):
     cfg = tmp_path / "bad_reward.yaml"
     cfg.write_text(_MINIMAL_OK.replace(
-        "path: src.rewards.r0_grace:r0_grace",
-        "path: src.rewards.r0_grace:not_a_real_function",
+        "name: r0_grace",
+        "name: not_a_real_function",
     ))
     problems = preflight(cfg)
-    assert any("has no attribute" in p for p in problems)
+    assert any("has no function named" in p for p in problems)
 
 
 def test_wrong_module_path_is_caught(tmp_path: Path):
     cfg = tmp_path / "wrong_module.yaml"
     cfg.write_text(_MINIMAL_OK.replace(
-        "path: src.rewards.r0_grace:r0_grace",
-        "path: src.rewards.r9_imaginary:r9_imaginary",
+        "path: src/rewards/r0_grace.py",
+        "path: src/rewards/r9_imaginary.py",
     ))
     problems = preflight(cfg)
-    assert any("cannot import module" in p for p in problems)
+    assert any("does not exist" in p for p in problems)
 
 
 def test_unknown_optimizer_is_caught(tmp_path: Path):
     cfg = tmp_path / "bad_opt.yaml"
-    cfg.write_text(_MINIMAL_OK.replace("name: grpo", "name: sgd"))
+    cfg.write_text(_MINIMAL_OK.replace("adv_estimator: grpo", "adv_estimator: sgd"))
     problems = preflight(cfg)
     assert any("is unknown" in p for p in problems)
 
 
 def test_dapo_requires_clip_ratios(tmp_path: Path):
     cfg = tmp_path / "dapo_missing_clip.yaml"
-    cfg.write_text(_MINIMAL_OK.replace("name: grpo", "name: dapo"))
+    cfg.write_text(_MINIMAL_OK.replace("adv_estimator: grpo", "adv_estimator: dapo"))
     problems = preflight(cfg)
     msgs = " ".join(problems)
     assert "clip_ratio_low" in msgs

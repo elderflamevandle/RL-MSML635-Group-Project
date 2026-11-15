@@ -1,0 +1,86 @@
+# T4 walking skeleton: ONE GRPO step through the full verl + vLLM stack.
+# Field names verified against verl @ 4aa02fe (verl/trainer/config/*.yaml).
+#
+# What changed vs. the first draft of this file (all of these were rejected
+# by verl's struct-mode Hydra schema, or silently did nothing):
+#   reward_fn.path            -> custom_reward_function.{path,name}  (a FILE path)
+#   algorithm.name: grpo      -> algorithm.adv_estimator: grpo
+#   algorithm.kl_coef         -> actor.use_kl_loss + actor.kl_loss_coef
+#   model.enable_lora         -> model.lora_rank > 0 is the switch
+#   data.*_files: *.jsonl     -> *.parquet built by scripts/build_verl_data.py
+defaults:
+  - ppo_trainer
+  - _self_
+
+# Stripped by launch_run.sh before verl sees the file (verl's schema is strict).
+_meta:
+  reward: r0
+  optimizer: grpo
+  model: qwen3-0.6b
+  seed: 0
+
+trainer:
+  project_name: rl-rag-skeleton
+  experiment_name: skeleton_t4
+  n_gpus_per_node: 1
+  nnodes: 1
+  total_epochs: 1
+  total_training_steps: 1
+  save_freq: 1
+  test_freq: -1
+  resume_mode: disable
+  logger: [console]
+  val_before_train: false
+
+data:
+  train_files: data/cache/bm25_val.parquet
+  val_files: data/cache/bm25_val.parquet
+  prompt_key: prompt
+  max_prompt_length: 1536
+  max_response_length: 384
+  train_batch_size: 2
+  # BM25 prompts occasionally run long; drop them instead of crashing.
+  filter_overlong_prompts: true
+  truncation: left
+  dataloader_num_workers: 2
+
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen3-0.6B
+    lora_rank: 16
+    lora_alpha: 32
+    # Feed the prompt as raw text, exactly like src/eval/evaluate.py does.
+    # Qwen3's stock chat template would switch thinking mode on and the
+    # <think> block would eat the whole response budget.
+    custom_chat_template: "{{ messages[0]['content'] }}"
+  actor:
+    ppo_mini_batch_size: 2
+    ppo_micro_batch_size_per_gpu: 2
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    use_torch_compile: false
+    optim:
+      lr: 1.0e-5
+  ref:
+    log_prob_micro_batch_size_per_gpu: 4
+  rollout:
+    name: vllm
+    mode: sync
+    n: 2
+    temperature: 0.9
+    dtype: float16
+    gpu_memory_utilization: 0.5
+    tensor_model_parallel_size: 1
+    max_num_batched_tokens: 4096
+    max_num_seqs: 64
+    log_prob_micro_batch_size_per_gpu: 4
+
+algorithm:
+  adv_estimator: grpo
+  norm_adv_by_std_in_grpo: true
+  use_kl_in_reward: false
+
+custom_reward_function:
+  path: src/rewards/verl_adapter.py
+  name: r0_score

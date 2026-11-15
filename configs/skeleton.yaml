@@ -1,9 +1,12 @@
-# Walking-skeleton GRPO config. Smallest workable configuration.
-# Server-only — do not try to run locally.
-# NOTE: Field names come from the GRACE paper's reference `verl` config.
-# When actually run on the server, verl will almost certainly complain about
-# field mismatches — the Week-1 walking-skeleton task includes iterating on
-# this until it runs. Our job here is just to put the file in place.
+# Walking-skeleton GRPO config, GPU server version (full vLLM rollout).
+# For the Colab T4 smoke test use configs/skeleton_t4.yaml instead, which
+# additionally overrides dtype/batch sizes to fit a T4's 16GB.
+# Schema verified against verl @ 4aa02fe; see configs/skeleton_t4.yaml's
+# header comment for the renames from the first (unverified) draft.
+defaults:
+  - ppo_trainer
+  - _self_
+
 _meta:
   reward: r0
   optimizer: grpo
@@ -15,30 +18,51 @@ trainer:
   experiment_name: skeleton
   n_gpus_per_node: 1
   nnodes: 1
+  total_epochs: 1
   total_training_steps: 1
   save_freq: 1
+  test_freq: -1
+  resume_mode: disable
+  logger: [console]
+  val_before_train: false
 
 data:
-  train_files: data/raw/hotpot_tiny.jsonl
-  val_files: data/raw/hotpot_tiny.jsonl
+  train_files: data/raw/hotpot_tiny.parquet
+  val_files: data/raw/hotpot_tiny.parquet
   prompt_key: prompt
   max_prompt_length: 2048
   max_response_length: 512
   train_batch_size: 4
+  filter_overlong_prompts: true
+  truncation: left
+  dataloader_num_workers: 2
 
 actor_rollout_ref:
   model:
     path: Qwen/Qwen3-0.6B
-    enable_lora: true
     lora_rank: 16
+    lora_alpha: 32
+    custom_chat_template: "{{ messages[0]['content'] }}"
+  actor:
+    ppo_mini_batch_size: 4
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    optim:
+      lr: 1.0e-5
   rollout:
     name: vllm
-    gpu_memory_utilization: 0.6
+    mode: sync
     n: 4
+    temperature: 0.9
+    gpu_memory_utilization: 0.6
+    tensor_model_parallel_size: 1
 
 algorithm:
-  name: grpo
-  kl_coef: 0.001
+  adv_estimator: grpo
+  norm_adv_by_std_in_grpo: true
+  use_kl_in_reward: false
 
-reward_fn:
-  path: src.rewards.r0_grace:r0_grace
+custom_reward_function:
+  path: src/rewards/verl_adapter.py
+  name: r0_score

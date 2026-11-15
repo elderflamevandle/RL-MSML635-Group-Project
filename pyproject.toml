@@ -1,19 +1,28 @@
 [project]
 name = "rl-rag"
 version = "0.1.0"
-requires-python = ">=3.12"
+# 3.12 only: vllm 0.8.5 and ray have no wheels for 3.13+. uv downloads its own
+# 3.12 (see .python-version), so the system / Colab kernel Python is irrelevant.
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    # HF stack upper bounds locked together: HF 1.0 / datasets 5.x / sentence-transformers 5+ /
-    # transformers 5.x all require torch>=2.6 (torch.accelerator API). We're on torch 2.5.x
-    # (CUDA 12.1 wheel), so pin to the last pre-rebrand majors that work with huggingface-hub 0.x.
-    "datasets>=2.20,<5",
-    "transformers>=4.44,<5",
+    # ---- one consistent stack, resolved together into uv.lock ----
+    # verl @ 4aa02fe (the GRACE pin) needs vllm 0.7.3-0.8.5 for LoRA rollouts.
+    # Qwen3 needs vllm>=0.8.5, and vllm 0.8.5 hard-pins torch==2.6.0.
+    # So torch 2.6.0 is the only version every layer agrees on.
+    "torch==2.6.0",
+    "numpy<2",                        # verl + vllm 0.8.5 both require numpy 1.x
+    "pyarrow>=19,<22",                # verl floor is 19; newer pyarrow wheels refuse numpy 1.x at import
+    "datasets>=3.0,<5",
+    # >=4.51.1 for Qwen3ForCausalLM; <4.53 keeps us on the releases vllm 0.8.5
+    # was tested against.
+    "transformers>=4.51.3,<4.53",
+    "huggingface-hub<1.0",
     "sentence-transformers>=3.0,<5",
+    "peft>=0.14,<0.18",
+    "accelerate>=1.0",
     "rank-bm25>=0.2.2",
     "rouge-score>=0.1.2",
     "bert-score>=0.3.13",
-    "torch>=2.3",
-    "numpy",
     "pydantic>=2",
     "pyyaml",
     "requests",
@@ -22,11 +31,53 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov", "ruff", "mypy"]
-train = ["vllm", "accelerate", "peft", "wandb"]  # heavy; install on server only
+# GPU training stack (Linux only: vllm ships no Windows/macOS wheels).
+# verl itself is NOT installed as a package -- scripts/setup_uv.sh clones it at
+# the GRACE pin and launch_run.sh puts it on PYTHONPATH. These are verl's own
+# install_requires (setup.py @ 4aa02fe) plus its [vllm] extra.
+train = [
+    "vllm==0.8.5; sys_platform == 'linux'",
+    "tensordict>=0.8.0,<=0.9.0",
+    "ray[default]>=2.41.0",
+    "hydra-core>=1.3",
+    "codetiming",
+    "dill",
+    "pandas<3",
+    "pybind11",
+    "pylatexenc",
+    "torchdata",
+    "wandb",
+    "packaging>=20.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-cov", "ruff", "mypy"]
+
+[tool.uv]
+# Only lock for the platforms we actually run on.
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+]
+
+# Linux: PyPI's torch 2.6.0 wheel already bundles CUDA 12.4.
+# Windows: PyPI's wheel is CPU-only, so pull the CUDA 12.4 build explicitly.
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu124", marker = "sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
