@@ -48,6 +48,15 @@ train = [
     "torchdata",
     "wandb",
     "packaging>=20.0",
+    # verl's actor code (verl/workers/actor/dp_actor.py) imports flash_attn
+    # unconditionally at module load, even when actor.use_remove_padding is
+    # false -- it's a hard import, not a feature-gated one. flash-attn ships
+    # no prebuilt wheel on PyPI (sdist only); its own setup.py has a
+    # CachedWheelsCommand that fetches a matching prebuilt wheel from
+    # Dao-AILab's GitHub releases before falling back to a from-source build
+    # (which can take 30-60+ min on a T4). [tool.uv] below keeps that fetch
+    # path working under uv.
+    "flash-attn>=2.7,<3; sys_platform == 'linux'",
 ]
 
 [dependency-groups]
@@ -59,6 +68,16 @@ environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
+# flash-attn's setup.py imports torch at build time to pick its own prebuilt
+# wheel (and, failing that, to compile against the right ABI) -- it needs
+# torch present in the build environment, not installed into one in
+# isolation first. no-build-isolation-package + extra-build-dependencies is
+# uv's documented pattern for exactly this (mamba-ssm, causal-conv1d,
+# flash-attn all need it).
+no-build-isolation-package = ["flash-attn"]
+
+[tool.uv.extra-build-dependencies]
+flash-attn = [{ requirement = "torch", match-runtime = true }]
 
 # Linux: PyPI's torch 2.6.0 wheel already bundles CUDA 12.4.
 # Windows: PyPI's wheel is CPU-only, so pull the CUDA 12.4 build explicitly.
