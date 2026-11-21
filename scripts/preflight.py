@@ -1,14 +1,20 @@
 """Lint a verl training config locally before shipping to the server.
 
+Field names are checked against real verl @ 4aa02fe (verl/trainer/config/*.yaml
+in that checkout), not guessed -- see configs/skeleton_t4.yaml for the list of
+renames from the original (GRACE-paper-reference-config-shaped) draft.
+
 Catches:
-  * missing required top-level sections (_meta, trainer, data, algorithm, reward_fn)
+  * missing required top-level sections (_meta, trainer, data, algorithm,
+    custom_reward_function)
   * missing _meta keys that scripts/launch_run.sh needs for run-id naming
-  * reward_fn.path that cannot be imported in this venv (typo, wrong module path)
-  * data.train_files / data.val_files that don't exist on this machine
-  * algorithm.name that doesn't match a known optimizer (grpo | dapo)
+  * custom_reward_function.{path,name} that cannot be imported/found in this venv
+  * data.train_files / data.val_files that don't exist on this machine, or that
+    are still .jsonl (verl's RLHFDataset reads parquet; see scripts/build_verl_data.py)
+  * algorithm.adv_estimator that doesn't match a known optimizer (grpo | dapo | gae)
 
 Usage:
-    python scripts/preflight.py configs/r0_grpo.yaml
+    python scripts/preflight.py configs/r0_grpo_t4.yaml
     python scripts/preflight.py configs/*.yaml       # multi-file, one line per file
 
 Exits 0 if all configs pass; exits 1 otherwise. Does NOT verify that verl
@@ -18,7 +24,7 @@ the mistakes you can catch *before* burning server time.
 from __future__ import annotations
 
 import argparse
-import importlib
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -27,23 +33,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import yaml
 
-REQUIRED_TOP = ["_meta", "trainer", "data", "algorithm", "reward_fn"]
+REQUIRED_TOP = ["_meta", "trainer", "data", "algorithm", "custom_reward_function"]
 REQUIRED_META = ["reward", "optimizer", "model"]
 REQUIRED_DATA = ["train_files", "val_files", "prompt_key"]
-KNOWN_OPTIMIZERS = {"grpo", "dapo", "ppo"}
+KNOWN_OPTIMIZERS = {"grpo", "dapo", "gae", "reinforce_plus_plus"}
 
 
-def _check_import(dotted: str) -> str | None:
-    """Return None if ok, else an error message."""
-    if ":" not in dotted:
-        return f"reward_fn.path should be 'module.path:function_name', got {dotted!r}"
-    mod_path, fn_name = dotted.split(":", 1)
+def _check_reward_fn(path: str, name: str) -> str | None:
+    """Return None if ok, else an error message.
+
+    verl's `get_custom_reward_fn` loads this as a bare file (importlib from
+    a path), not as a package -- so we mirror that exactly rather than
+    `import_module`, which would resolve relative to sys.path instead.
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        return f"custom_reward_function.path {path!r} does not exist"
+    spec = importlib.util.spec_from_file_location("preflight_check", file_path)
     try:
-        mod = importlib.import_module(mod_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
     except Exception as exc:  # noqa: BLE001 — surface any import failure to user
-        return f"cannot import module {mod_path!r}: {type(exc).__name__}: {exc}"
-    if not hasattr(mod, fn_name):
-        return f"module {mod_path!r} has no attribute {fn_name!r}"
+        return f"cannot load {path!r}: {type(exc).__name__}: {exc}"
+    if not hasattr(mod, name):
+        return f"{path!r} has no function named {name!r}"
     return None
 
 
@@ -87,36 +100,61 @@ def preflight(cfg_path: Path) -> list[str]:
 
     for file_key in ("train_files", "val_files"):
         p = data.get(file_key)
-        if p and not Path(p).exists():
+        if not p:
+            continue
+        if Path(p).suffix != ".parquet":
+            problems.append(
+                f"data.{file_key}={p!r} is not .parquet -- verl's RLHFDataset reads "
+                f"parquet, not jsonl. Run scripts/build_verl_data.py to convert."
+            )
+        elif not Path(p).exists():
             problems.append(
                 f"data.{file_key} points at {p!r} which does not exist on this machine "
                 f"(fine if intended to run on the server; "
-                f"otherwise run scripts/build_retrieval.py)"
+                f"otherwise run scripts/build_retrieval.py then scripts/build_verl_data.py)"
             )
 
     alg = cfg.get("algorithm", {}) or {}
-    alg_name = alg.get("name")
-    if alg_name is None:
-        problems.append("algorithm.name is missing")
-    elif alg_name not in KNOWN_OPTIMIZERS:
+    adv_estimator = alg.get("adv_estimator")
+    if adv_estimator is None:
+        problems.append("algorithm.adv_estimator is missing")
+    elif adv_estimator not in KNOWN_OPTIMIZERS:
         problems.append(
-            f"algorithm.name={alg_name!r} is unknown; expected one of {sorted(KNOWN_OPTIMIZERS)}"
+            f"algorithm.adv_estimator={adv_estimator!r} is unknown; "
+            f"expected one of {sorted(KNOWN_OPTIMIZERS)}"
         )
-    if alg_name == "dapo":
+    if adv_estimator == "dapo":
         for req_key in ("clip_ratio_low", "clip_ratio_high"):
             if req_key not in alg:
                 problems.append(
-                    f"algorithm.{req_key} is required when algorithm.name='dapo'"
+                    f"algorithm.{req_key} is required when algorithm.adv_estimator='dapo'"
                 )
 
-    reward = cfg.get("reward_fn", {}) or {}
+    reward = cfg.get("custom_reward_function", {}) or {}
     path = reward.get("path")
+    name = reward.get("name")
     if not path:
-        problems.append("reward_fn.path is missing")
+        problems.append("custom_reward_function.path is missing")
+    elif not name:
+        problems.append("custom_reward_function.name is missing")
     else:
-        err = _check_import(path)
+        err = _check_reward_fn(path, name)
         if err:
-            problems.append(f"reward_fn.path: {err}")
+            problems.append(f"custom_reward_function: {err}")
+
+    actor = (cfg.get("actor_rollout_ref", {}) or {}).get("actor", {}) or {}
+    if "kl_coef" in (cfg.get("algorithm", {}) or {}):
+        problems.append(
+            "algorithm.kl_coef is not a real verl field -- GRPO's KL penalty is "
+            "actor_rollout_ref.actor.use_kl_loss + .kl_loss_coef"
+        )
+    if (cfg.get("actor_rollout_ref", {}) or {}).get("model", {}).get("enable_lora"):
+        problems.append(
+            "actor_rollout_ref.model.enable_lora is not a real verl field -- "
+            "LoRA is switched on by setting model.lora_rank > 0"
+        )
+    if actor.get("use_kl_loss") and "kl_loss_coef" not in actor:
+        problems.append("actor_rollout_ref.actor.kl_loss_coef is required when use_kl_loss is true")
 
     return problems
 

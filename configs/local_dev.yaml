@@ -1,63 +1,90 @@
-# Local-dev training config -- for a laptop with 6-8 GB VRAM.
+# Local-dev training config -- for a laptop/workstation GPU with 6-8GB VRAM.
 #
-# NOTE: This config is for the FUTURE case where we add a local training
-# path (e.g., using `trl.GRPOTrainer`). Today, training stays on the
-# server (configs/skeleton.yaml, configs/r0_grpo.yaml). This file is a
-# placeholder with the right shape so Member 3 can wire it up later.
+# IMPORTANT: verl's rollout engine needs vLLM, and vLLM needs a real NVIDIA
+# GPU with enough VRAM for its own KV-cache allocator on top of the model --
+# it does not run on CPU (confirmed directly: CPU rollout raises
+# "No available nccl backend found on device type cpu" during worker init,
+# before a single step runs) and 6-8GB is tight for vLLM's allocator even
+# with a 0.6B model. So for anything *without* a dedicated CUDA GPU --
+# a laptop, a Colab/Kaggle CPU-only session, or this box -- use the
+# verl/vLLM/Ray-free fallback trainer instead, which only needs
+# transformers+peft:
 #
-# Reality check for a 6GB RTX 4050:
-#   - Qwen3-0.6B fp16 inference:         ~1.2GB — fine
-#   - Qwen3-0.6B fp16 LoRA training:     ~3-4GB with batch=1, grad_accum=8
-#   - Qwen3-0.6B fp16 LoRA + vLLM:       won't fit alongside rollouts
+#   uv run python -m src.training.grpo_hf \
+#       --train data/cache/bm25_val.jsonl --reward r0 --steps 50 \
+#       --device cpu --model-dtype bfloat16
 #
-# For local work prefer `scripts/local_sanity.py` (inference only, no
-# training). Full training runs happen on the server.
+# (CLI flags, not a yaml config -- see `--help` or the module docstring for
+# the full list. Checkpoints land in results/<run_id>/checkpoints/ as plain
+# PEFT adapters, loadable by src/eval/evaluate.py --backend hf, same as a
+# verl LoRA checkpoint.)
+#
+# The config below is for the case you DO have a small CUDA GPU and want
+# the real verl/vLLM path at a reduced footprint. Schema verified against
+# verl @ 4aa02fe; see configs/skeleton_t4.yaml's header for the renames
+# from the first (unverified) draft of this file.
+defaults:
+  - ppo_trainer
+  - _self_
 
 _meta:
   reward: r0
   optimizer: grpo
   model: qwen3-0.6b
   seed: 0
-  device: auto               # auto|cpu|cuda — resolved via src/common/device.py
 
 trainer:
   project_name: rl-rag-local
   experiment_name: r0_grpo_local_dev
   n_gpus_per_node: 1
   nnodes: 1
-  total_training_steps: 20   # smoke-test number; crank up on server
+  total_epochs: 1
+  total_training_steps: 20   # smoke-test number; crank up once it runs clean
   save_freq: 20
+  test_freq: -1
+  resume_mode: disable
   logger: [console]
+  val_before_train: false
 
 data:
-  train_files: data/raw/hotpot_tiny.jsonl   # tiny for local; swap to dense_train.jsonl on server
-  val_files:   data/raw/hotpot_tiny.jsonl
+  train_files: data/raw/hotpot_tiny.parquet   # tiny for local; swap to dense_train.parquet on a real GPU box
+  val_files:   data/raw/hotpot_tiny.parquet
   prompt_key: prompt
   max_prompt_length: 1024    # halved vs server
   max_response_length: 256   # halved vs server
   train_batch_size: 1        # one at a time
-  grad_accumulation_steps: 8 # effective batch 8
+  filter_overlong_prompts: true
+  truncation: left
+  dataloader_num_workers: 1
 
 actor_rollout_ref:
   model:
     path: Qwen/Qwen3-0.6B
-    enable_lora: true
-    lora_rank: 8             # halved vs server (saves VRAM)
+    lora_rank: 8              # halved vs server (saves VRAM)
     lora_alpha: 16
-    gradient_checkpointing: true
-  rollout:
-    backend: hf              # DO NOT use vllm locally (won't fit)
-    n: 4                     # smaller G group than server (saves time)
-    temperature: 0.9
+    custom_chat_template: "{{ messages[0]['content'] }}"
+    enable_gradient_checkpointing: true
   actor:
+    ppo_mini_batch_size: 1
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
     optim:
       lr: 1.0e-5
-    ppo_mini_batch_size: 1
+  rollout:
+    name: vllm
+    mode: sync
+    n: 4                       # smaller G group than server (saves time/VRAM)
+    temperature: 0.9
+    dtype: float16
+    gpu_memory_utilization: 0.5
+    tensor_model_parallel_size: 1
 
 algorithm:
-  name: grpo
-  kl_coef: 0.001
-  advantage_normalization: true
+  adv_estimator: grpo
+  norm_adv_by_std_in_grpo: true
+  use_kl_in_reward: false
 
-reward_fn:
-  path: src.rewards.r0_grace:r0_grace
+custom_reward_function:
+  path: src/rewards/verl_adapter.py
+  name: r0_score

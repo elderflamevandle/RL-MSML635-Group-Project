@@ -10,7 +10,7 @@ if __name__ == "__main__":
         ("validation", 500, Path("data/raw/hotpot_val.jsonl")),
     ]:
         out.parent.mkdir(parents=True, exist_ok=True)
-        ds = load_dataset("hotpot_qa", "distractor", split=f"{split}[:{n}]")
+        ds = load_dataset("hotpotqa/hotpot_qa", "distractor", split=f"{split}[:{n}]")
         with out.open("w", encoding="utf-8") as f:
             for row in ds:
                 f.write(json.dumps(row) + "\n")
